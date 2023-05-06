@@ -1,0 +1,62 @@
+name: Build and Push Docker Image
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  vite-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Use Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "19"
+      - name: Install dependencies
+        run: npm install
+      - name: Build and test
+        run: npm run build && npm test
+      - name: Archive build directory
+        uses: actions/upload-artifact@v2
+        with:
+          name: build
+          path: dist
+
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    needs: [vite-build-and-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Login to Docker Registry
+        run: echo ${{ secrets.DOCKER_TOKEN }} | docker login https://dockerreg.${{ secrets.SERVER_URL }}:443 -u ${{ secrets.SERVER_USER }} --password-stdin
+      - name: Download build artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: build
+      - name: Build Docker Image
+        run: docker build -t dockerreg.${{ secrets.SERVER_URL }}:443/techlm-front:latest .
+      - name: Push Docker Image
+        run: docker push dockerreg.${{ secrets.SERVER_URL }}:443/techlm-front:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [docker-build-and-push]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Install SSH
+        run: sudo apt update && sudo apt install -y ssh
+      - name: SSH to server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_URL }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            echo ${{ secrets.DOCKER_TOKEN }} | docker login https://dockerreg.${{ secrets.SERVER_URL }}:443 -u ${{ secrets.SERVER_USER }} --password-stdin
+            sudo systemctl start docker-compose-techlm-front.service
